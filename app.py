@@ -1,27 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, re, sys, time, json, requests, subprocess, socket
+import os, re, sys, time, json, requests, subprocess
 import urllib.request, urllib.parse, urllib.error
 from datetime import datetime
 from seleniumbase import SB
-
-
-def _resolve_proxy_port():
-    """自动探测本机可用代理端口（setup_proxy.sh 写入 PROXY_PORT，否则尝试常见端口）"""
-    env_port = os.environ.get("PROXY_PORT", "").strip()
-    if env_port:
-        return env_port
-    for p in ("7890", "1080", "7891"):
-        try:
-            s = socket.socket()
-            s.settimeout(1)
-            s.connect(("127.0.0.1", int(p)))
-            s.close()
-            return p
-        except Exception:
-            continue
-    return "1080"
 
 # 环境变量配置(可以直接私库在双引号里填写)
 EMAIL         = os.environ.get("EMAIL") or ""           # 邮箱,只用于通知使用，可随意填写
@@ -29,28 +12,7 @@ SESSION_TOKEN = os.environ.get("SESSION_TOKEN") or ""   # session token，默认
 DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN") or ""   # Discord Token 备用登录方式, 失败时才使用,必须填写
 GH_TOKEN      = os.environ.get("GH_TOKEN") or ""        # GitHub PAT token,用于自动更新session token,可选
 TG_CHAT_ID    = os.environ.get("TG_CHAT_ID") or ""      # TG chat id,不填写不通知，需和bot token一起填写生效
-TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN") or ""    # TG bot token
-
-# 代理端口：优先读 workflow 设置的环境变量（setup_proxy.sh 会写入 GITHUB_ENV），
-# 兜底 7890（sing-box 默认 HTTP 端口）和 1080（SOCKS5 旧端口），按顺序尝试可用者
-def _resolve_proxy_port():
-    env_port = os.environ.get("PROXY_PORT", "").strip()
-    if env_port:
-        return env_port
-    # 尝试 7890（sing-box HTTP）-> 1080（SOCKS5 旧）-> 7891（SOCKS5）
-    for p in ("7890", "1080", "7891"):
-        try:
-            import socket
-            s = socket.socket()
-            s.settimeout(1)
-            s.connect(("127.0.0.1", int(p)))
-            s.close()
-            return p
-        except Exception:
-            continue
-    return "1080"   # 兜底旧端口（配了代理但端口不在上述时）
-
-_PROXY_PORT = _resolve_proxy_port() 
+TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN") or ""    # TG bot token 
 
 # 解析 DISCORD_TOKEN
 DC_TOKEN = ""
@@ -181,14 +143,9 @@ def get_current_ip(proxy_server: str = "") -> str:
     proxies = None
     if proxy_server:
         proxies = {"http": proxy_server, "https": proxy_server}
-    try:
-        response = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
-        response.raise_for_status()
-        return response.text.strip()
-    except Exception as e:
-        # 代理可能还没就绪或端口变化，打印警告后继续（不阻断主流程）
-        print(f"⚠️ 获取出口 IP 失败: {e}")
-        return "unknown"
+    response = requests.get("https://api.ip.sb/ip", proxies=proxies, timeout=15)
+    response.raise_for_status()
+    return response.text.strip()
 
 # 时间格式化
 def format_countdown(countdown_str: str) -> str:
@@ -304,8 +261,7 @@ def discord_authorize(state: str) -> str:
     # 如果配置了代理，Discord API 请求也走代理
     proxies = None
     _is_proxy = os.environ.get("IS_PROXY", "false").lower() == "true"
-    _proxy_port = os.environ.get("PROXY_PORT", "").strip() or _PROXY_PORT
-    _proxy_server = os.environ.get("PROXY_SERVER", "").strip() or f"http://127.0.0.1:{_proxy_port}"
+    _proxy_server = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
     if _is_proxy:
         proxies = {"http": _proxy_server, "https": _proxy_server}
 
@@ -392,9 +348,8 @@ def main():
     print("#" * 25)
 
     IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
-    PROXY_PORT = os.environ.get("PROXY_PORT", "").strip() or _resolve_proxy_port()
-    PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip() or f"http://127.0.0.1:{PROXY_PORT}"
-    HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true"
+    PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
+    HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true" 
 
     sb_kwargs = {"uc": True, "headless": HEADLESS}
 
@@ -417,35 +372,15 @@ def main():
 
         # 方式1: SESSION_TOKEN Cookie 登录（默认）
         if SESSION_TOKEN:
-            print(f"🚀 启动浏览器（代理端口={PROXY_PORT}）...")
-            # 先访问登录页建立域名上下文，等 URL 完全稳定后再注入 cookie
-            sb.open("https://bot-hosting.net/login")
+            print("🚀 启动浏览器...")
+            sb.open("https://bot-hosting.net/")
             sb.wait_for_ready_state_complete()
-            # 等最多 5 秒直到 URL 不再跳转
-            stable_url = ""
-            for _ in range(10):
-                time.sleep(0.5)
-                cur = sb.get_current_url()
-                if cur == stable_url and "bot-hosting" in cur:
-                    break
-                stable_url = cur
+            sb.sleep(2)
 
-            current_domain = urllib.parse.urlparse(sb.get_current_url()).netloc
-            current_domain = current_domain.split(":")[0]   # 去掉端口
-            print(f"📝 注入 Cookie（当前域: {current_domain}）...")
+            print("📝 注入 Cookie...")
             for name, value in COOKIES.items():
                 if value:
-                    try:
-                        sb.add_cookie({"name": name, "value": value, "domain": current_domain})
-                    except Exception as cookie_err:
-                        # 尝试主域名兜底
-                        if current_domain != "bot-hosting.net":
-                            try:
-                                sb.add_cookie({"name": name, "value": value, "domain": "bot-hosting.net"})
-                            except Exception:
-                                pass
-                        else:
-                            print(f"⚠️ Cookie 注入失败: {cookie_err}")
+                    sb.add_cookie({"name": name, "value": value, "domain": "bot-hosting.net"})
 
             print("🌐 访问 https://bot-hosting.net/a/billings ...")
             sb.open("https://bot-hosting.net/a/billings")
