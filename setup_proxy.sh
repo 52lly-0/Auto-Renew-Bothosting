@@ -1,22 +1,22 @@
 #!/bin/bash
 # setup_proxy.sh - 代理节点解析与 sing-box 启动
-# 这是一个功能完整的替代脚本，用于替换已失效的远程脚本
+# 这是一个功能完整的替代脚本,用于替换已失效的远程脚本
 
 export LC_ALL=C
 set -e
 
-# 默认测试节点（可通过环境变量覆盖）
+# 默认测试节点(可通过环境变量覆盖)
 export NODE_LINK=${NODE_LINK:-''}
 
 if [ -z "$NODE_LINK" ]; then
-  echo "[INFO] 未配置代理，直连模式"
+  echo "[INFO] 未配置代理,直连模式"
   echo "IS_PROXY=false" >> $GITHUB_ENV
   exit 0
 fi
 
 # 检查并安装 jq
 if ! command -v jq &> /dev/null; then
-  echo "[ERROR] jq 未安装，正在安装..."
+  echo "[ERROR] jq 未安装,正在安装..."
   sudo apt-get update && sudo apt-get install -y jq
 fi
 
@@ -24,7 +24,7 @@ fi
 command -v curl &>/dev/null && COMMAND="curl -so" || command -v wget &>/dev/null && COMMAND="wget -qO" || { echo "Error: neither curl nor wget found, please install one of them." >&2; exit 1; }
 
 echo "[INFO] 获取 sing-box 最新版本..."
-# 尝试获取最新版本，失败则使用备用版本
+# 尝试获取最新版本,失败则使用备用版本
 latest_version=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r '[.[] | select(.prerelease==false)][0].tag_name | sub("^v"; "")' 2>/dev/null || echo "")
 if [ -z "$latest_version" ]; then
   echo "[ERROR] 无法获取 sing-box 最新版本,将下载 v1.13.16"
@@ -46,10 +46,10 @@ esac
 # 下载 sing-box
 download_version="$latest_version"
 if ! $COMMAND "sing-box-${download_version}-linux-${ARCH}.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${download_version}/sing-box-${download_version}-linux-${ARCH}.tar.gz"; then
-    echo "[WARN] 下载版本 v${download_version} 失败，尝试备用版本 v1.13.16"
+    echo "[WARN] 下载版本 v${download_version} 失败,尝试备用版本 v1.13.16"
     download_version="1.13.16"
     if ! $COMMAND "sing-box-${download_version}-linux-${ARCH}.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${download_version}/sing-box-${download_version}-linux-${ARCH}.tar.gz"; then
-        echo "[ERROR] 备用版本也下载失败，请检查网络连接"
+        echo "[ERROR] 备用版本也下载失败,请检查网络连接"
         exit 1
     fi
 fi
@@ -61,12 +61,12 @@ rm -f "sing-box-${download_version}-linux-${ARCH}.tar.gz"
 rm -rf "sing-box-${download_version}-linux-${ARCH}"
 chmod +x sing-box
 
-# ─── 辅助函数：安全 JSON 字符串（转义双引号和反斜杠） ───────────────────────
+# ─── 辅助函数:安全 JSON 字符串(转义双引号和反斜杠) ───────────────────────
 json_str() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-# 辅助函数：URL 解码
+# 辅助函数:URL 解码
 url_decode() {
   local encoded="$1"
   printf '%b' "$(echo "$encoded" | sed 's/%/\\x/g')"
@@ -119,6 +119,8 @@ case "$proto" in
       host_port="$rest"
       query=""
     fi
+    # 剥离尾部斜杠（避免 port 变成 "443/"）
+    host_port="${host_port%/}"
     outbound_server="${host_port%:*}"
     outbound_port="${host_port#*:}"
     outbound_uuid="$uuid"
@@ -199,6 +201,7 @@ case "$proto" in
       host_port="$rest"
       query=""
     fi
+    host_port="${host_port%/}"
     outbound_server="${host_port%:*}"
     outbound_port="${host_port#*:}"
     outbound_password="$password"
@@ -280,6 +283,7 @@ case "$proto" in
       host_port="$rest"
       query=""
     fi
+    host_port="${host_port%/}"
     outbound_server="${host_port%:*}"
     outbound_port="${host_port#*:}"
     outbound_type="tuic"
@@ -310,6 +314,7 @@ case "$proto" in
       host_port="$rest"
       query=""
     fi
+    host_port="${host_port%/}"
     outbound_server="${host_port%:*}"
     outbound_port="${host_port#*:}"
     outbound_password="$password"
@@ -347,6 +352,7 @@ case "$proto" in
     else
       host_port="$content"
     fi
+    host_port="${host_port%/}"
     outbound_server="${host_port%:*}"
     outbound_port="${host_port#*:}"
     outbound_type="socks"
@@ -363,7 +369,7 @@ if [ -z "$outbound_server" ] || [ -z "$outbound_port" ]; then
   exit 1
 fi
 
-# ─── 用 jq 工具安全构建 outbound JSON（彻底避免字符串拼接引号问题） ────────
+# ─── 用 jq 工具安全构建 outbound JSON(彻底避免字符串拼接引号问题) ────────
 echo "[INFO] 构建 sing-box 配置..."
 
 # 生成基础 outbound
@@ -619,7 +625,7 @@ case "$outbound_type" in
 esac
 
 # ─── 构建完整 sing-box 配置文件 ────────────────────────────────────────────
-# inbound: 监听 7890（HTTP）、7891（SOCKS5）、TUN（fake-ip）
+# inbound: 监听 7890(HTTP)、7891(SOCKS5)、TUN(fake-ip)
 CONFIG_JSON=$(jq -n \
   --argjson outbound "$outbound_json" \
   '{
@@ -715,4 +721,4 @@ nohup ./sing-box run -c sing-box-config.json > sing-box.log 2>&1 &
 SINGBOX_PID=$!
 echo "IS_PROXY=true" >> $GITHUB_ENV
 echo "SINGBOX_PID=$SINGBOX_PID" >> $GITHUB_ENV
-echo "[INFO] sing-box 已启动 (PID: $SINGBOX_PID)，代理端口: HTTP=7890 SOCKS5=7891"
+echo "[INFO] sing-box 已启动 (PID: $SINGBOX_PID),代理端口: HTTP=7890 SOCKS5=7891"
