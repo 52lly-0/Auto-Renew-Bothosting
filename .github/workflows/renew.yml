@@ -102,6 +102,7 @@ jobs:
           SESSION_TOKEN: ${{ secrets.SESSION_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PROXY: ${{ env.LOCAL_PROXY }}
         run: |
           xvfb-run --auto-servernum python3 app.py
 
