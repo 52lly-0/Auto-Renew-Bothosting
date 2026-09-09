@@ -32,15 +32,14 @@ jobs:
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
-          # 1. 赋予脚本执行权限并运行本地脚本
-          chmod +x setup_proxy.sh
-          bash setup_proxy.sh
-          
-          # 2. 安装 dos2unix 工具，并自动转换刚下载的脚本的换行符
+          # 1. 安装 dos2unix 工具
           sudo apt-get install -y dos2unix
+          
+          # 2. 在运行前，强制将本地脚本的换行符转换为 Unix 格式 (LF)
           dos2unix setup_proxy.sh
           
-          # 3. 重新运行转换后的脚本（此时换行符已正确）
+          # 3. 赋予脚本执行权限并运行
+          chmod +x setup_proxy.sh
           bash setup_proxy.sh
       - name: 🚀 运行续期脚本
         env:
