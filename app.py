@@ -260,10 +260,9 @@ def discord_authorize(state: str) -> str:
 
     # 如果配置了代理，Discord API 请求也走代理
     proxies = None
-    _is_proxy = os.environ.get("IS_PROXY", "false").lower() == "true"
-    _proxy_server = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
-    if _is_proxy:
-        proxies = {"http": _proxy_server, "https": _proxy_server}
+    _proxy = os.environ.get("PROXY", "").strip()
+    if _proxy:
+        proxies = {"http": _proxy, "https": _proxy}
 
     try:
         resp = requests.post(authorize_url, headers=headers, data=body, proxies=proxies, timeout=20)
@@ -347,15 +346,14 @@ def main():
     print("   Bot-hosting 自动续期")
     print("#" * 25)
 
-    IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
-    PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1080"
-    HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true" 
+    PROXY = os.environ.get("PROXY", "").strip()  # 完整代理地址，如 http://127.0.0.1:8080；为空则直连
+    HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true"
 
     sb_kwargs = {"uc": True, "headless": HEADLESS}
 
-    if IS_PROXY:
-        print(f"🔗 挂载代理: {PROXY_SERVER}")
-        sb_kwargs["proxy"] = PROXY_SERVER
+    if PROXY:
+        print(f"🔗 挂载代理: {PROXY}")
+        sb_kwargs["proxy"] = PROXY
     else:
         print("🍭 未使用代理，直连访问")
 
@@ -363,7 +361,7 @@ def main():
 
     with SB(**sb_kwargs) as sb:
         try:
-            ip = get_current_ip(PROXY_SERVER if IS_PROXY else "")
+            ip = get_current_ip(PROXY)
             print(f"📍 当前出口IP: {ip}")
         except Exception as e:
             print(f"⚠️ 获取出口 IP 失败: {e}")
