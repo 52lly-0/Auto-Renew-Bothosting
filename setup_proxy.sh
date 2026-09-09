@@ -61,7 +61,18 @@ rm -f "sing-box-${download_version}-linux-${ARCH}.tar.gz"
 rm -rf "sing-box-${download_version}-linux-${ARCH}"
 chmod +x sing-box
 
-# 解析节点链接
+# ─── 辅助函数：安全 JSON 字符串（转义双引号和反斜杠） ───────────────────────
+json_str() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# 辅助函数：URL 解码
+url_decode() {
+  local encoded="$1"
+  printf '%b' "$(echo "$encoded" | sed 's/%/\\x/g')"
+}
+
+# ─── 解析节点链接 ───────────────────────────────────────────────────────────
 proto=$(echo "$NODE_LINK" | cut -d':' -f1)
 content="${NODE_LINK#*://}"
 content="${content%%#*}"
@@ -95,12 +106,6 @@ outbound_password2=""
 outbound_version="5"
 outbound_insecure="false"
 outbound_alpn=""
-
-# 辅助函数：URL 解码
-url_decode() {
-  local encoded="$1"
-  printf '%b' "$(echo "$encoded" | sed 's/%/\\x/g')"
-}
 
 case "$proto" in
   vless)
@@ -236,7 +241,7 @@ case "$proto" in
       hp="$host_port"
       query=""
     fi
-    hp="${hp%/}"                    
+    hp="${hp%/}"
     outbound_server="${hp%:*}"
     outbound_port="${hp#*:}"
     outbound_type="hysteria2"
@@ -358,19 +363,356 @@ if [ -z "$outbound_server" ] || [ -z "$outbound_port" ]; then
   exit 1
 fi
 
-# 构建 outbound 对象
-jq_outbound="{\"type\":\"$outbound_type\",\"tag\":\"proxy\",\"server\":\"$outbound_server\",\"server_port\":$outbound_port"
+# ─── 用 jq 工具安全构建 outbound JSON（彻底避免字符串拼接引号问题） ────────
+echo "[INFO] 构建 sing-box 配置..."
 
+# 生成基础 outbound
+outbound_json=$(jq -n \
+  --arg type    "$outbound_type"   \
+  --arg server  "$outbound_server" \
+  --arg port    "$outbound_port"   \
+  '{
+    type:     $type,
+    tag:      "proxy",
+    server:   $server,
+    server_port: ($port | tonumber)
+  }')
+
+# 按协议追加字段
 case "$outbound_type" in
   vless)
-    jq_outbound="$jq_outbound,\"uuid\":\"$outbound_uuid\""
-    [ -n "$outbound_flow" ] && jq_outbound="$jq_outbound,\"flow\":\"$outbound_flow\""
+    # UUID
+    outbound_json=$(echo "$outbound_json" | jq --arg uuid "$outbound_uuid" '. + {uuid: $uuid}')
+    # flow
+    [ -n "$outbound_flow" ] && outbound_json=$(echo "$outbound_json" | jq --arg flow "$outbound_flow" '. + {flow: $flow}')
+    # transport (非 TCP 时)
     if [ "$outbound_transport_type" != "tcp" ]; then
-      jq_outbound="$jq_outbound,\"transport\":{\"type\":\"$outbound_transport_type\",\"path\":\"$outbound_path\",\"headers\":{\"Host\":\"$outbound_host\"}}"
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg ttype  "$outbound_transport_type" \
+        --arg path   "$outbound_path"           \
+        --arg host   "$outbound_host"           \
+        '. + {
+          transport: {
+            type: $ttype,
+            path: $path,
+            headers: { Host: $host }
+          }
+        }')
     fi
+    # TLS / Reality
     tls_enabled="false"
     [ "$outbound_security" = "tls" ] || [ "$outbound_security" = "reality" ] && tls_enabled="true"
-    tls_json="{\"enabled\":$tls_enabled,\"server_name\":\"$outbound_sni\",\"insecure\":$outbound_insecure,\"utls\":{\"enabled\":true,\"fingerprint\":\"$outbound_fingerprint\"}"
-    [ "$outbound_security" = "reality" ] && tls_json="$tls_json,\"reality\":{\"enabled\":true,\"public_key\":\"$outbound_reality_pbk\",\"short_id\":\"$outbound_reality_sid\"}"
-    tls_json="$tls_json}"
-    jq_outbound="$jq
+
+    tls_obj=$(jq -n \
+      --argjson enabled  "$tls_enabled"       \
+      --arg      sni      "$outbound_sni"      \
+      --argjson insecure "$outbound_insecure"  \
+      --arg      fp       "$outbound_fingerprint" \
+      '{
+        enabled:     $enabled,
+        server_name: $sni,
+        insecure:    $insecure,
+        utls: {
+          enabled:    true,
+          fingerprint: $fp
+        }
+      }')
+
+    if [ "$outbound_security" = "reality" ]; then
+      tls_obj=$(echo "$tls_obj" | jq \
+        --arg pbk "$outbound_reality_pbk" \
+        --arg sid "$outbound_reality_sid" \
+        '. + {
+          reality: {
+            enabled:    true,
+            public_key: $pbk,
+            short_id:   $sid
+          }
+        }')
+    fi
+
+    outbound_json=$(echo "$outbound_json" | jq --argjson tls "$tls_obj" '. + {tls: $tls}')
+    ;;
+
+  vmess)
+    outbound_json=$(echo "$outbound_json" | jq --arg uuid "$outbound_uuid" '. + {uuid: $uuid}')
+    if [ "$outbound_transport_type" != "tcp" ]; then
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg ttype "$outbound_transport_type" \
+        --arg path  "$outbound_path"           \
+        --arg host  "$outbound_host"           \
+        '. + {
+          transport: {
+            type: $ttype,
+            path: $path,
+            headers: { Host: $host }
+          }
+        }')
+    fi
+    if [ "$outbound_security" = "tls" ]; then
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg sni      "$outbound_sni"       \
+        --argjson ins  "$outbound_insecure"  \
+        --arg fp       "$outbound_fingerprint" \
+        '. + {
+          tls: {
+            enabled:     true,
+            server_name: $sni,
+            insecure:    $ins,
+            utls: {
+              enabled:    true,
+              fingerprint: $fp
+            }
+          }
+        }')
+    fi
+    ;;
+
+  trojan)
+    outbound_json=$(echo "$outbound_json" | jq --arg password "$outbound_password" '. + {password: $password}')
+    if [ "$outbound_transport_type" != "tcp" ]; then
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg ttype "$outbound_transport_type" \
+        --arg path  "$outbound_path"           \
+        --arg host  "$outbound_host"           \
+        '. + {
+          transport: {
+            type: $ttype,
+            path: $path,
+            headers: { Host: $host }
+          }
+        }')
+    fi
+    if [ "$outbound_security" = "tls" ]; then
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg sni      "$outbound_sni"       \
+        --argjson ins  "$outbound_insecure"  \
+        --arg fp       "$outbound_fingerprint" \
+        '. + {
+          tls: {
+            enabled:     true,
+            server_name: $sni,
+            insecure:    $ins,
+            utls: {
+              enabled:    true,
+              fingerprint: $fp
+            }
+          }
+        }')
+    fi
+    ;;
+
+  hysteria2|hy2)
+    outbound_json=$(echo "$outbound_json" | jq \
+      --arg auth "$outbound_auth" \
+      '{
+        type:     "hysteria2",
+        tag:      "proxy",
+        server:   $outbound_server,
+        server_port: ($outbound_port | tonumber),
+        up_mbps:    $outbound_up_mbps,
+        down_mbps:  $outbound_down_mbps,
+        obfs: {
+          type:     "sobra",
+          password: $outbound_obfs_password
+        },
+        tls: {
+          enabled:     true,
+          server_name: $outbound_sni,
+          insecure:    ($outbound_insecure == "true"),
+          utls: {
+            enabled:    true,
+            fingerprint: $outbound_fingerprint
+          }
+        }
+      }' --arg outbound_server "$outbound_server" \
+         --argjson outbound_port "$outbound_port" \
+         --argjson outbound_up_mbps "$outbound_up_mbps" \
+         --argjson outbound_down_mbps "$outbound_down_mbps" \
+         --arg outbound_obfs_password "$outbound_obfs_password" \
+         --arg outbound_sni "$outbound_sni" \
+         --argjson outbound_insecure "$outbound_insecure" \
+         --arg outbound_fingerprint "$outbound_fingerprint")
+    ;;
+
+  tuic)
+    outbound_json=$(echo "$outbound_json" | jq \
+      --arg uuid         "$outbound_uuid"     \
+      --arg password     "$outbound_password2" \
+      --arg congestion   "$outbound_congestion" \
+      --arg alpn         "$outbound_alpn"     \
+      --arg sni          "$outbound_sni"       \
+      --argjson insecure "$outbound_insecure"  \
+      --arg fp           "$outbound_fingerprint" \
+      '{
+        type:       "tuic",
+        tag:        "proxy",
+        server:     $outbound_server,
+        server_port: ($outbound_port | tonumber),
+        uuid:       $uuid,
+        password:   $password,
+        congestion_control: $congestion,
+        alpn:       ($alpn | if . == "" then [] else [.] end),
+        tls: {
+          enabled:     true,
+          server_name: $sni,
+          insecure:    $insecure,
+          utls: {
+            enabled:    true,
+            fingerprint: $fp
+          }
+        }
+      }' --arg outbound_server "$outbound_server" \
+         --argjson outbound_port "$outbound_port")
+    ;;
+
+  anytls)
+    outbound_json=$(echo "$outbound_json" | jq \
+      --arg password "$outbound_password" \
+      --arg sni      "$outbound_sni"       \
+      --argjson ins  "$outbound_insecure"  \
+      --arg fp       "$outbound_fingerprint" \
+      '{
+        type:     "anytls",
+        tag:      "proxy",
+        server:   $outbound_server,
+        server_port: ($outbound_port | tonumber),
+        password: $password,
+        tls: {
+          enabled:     true,
+          server_name: $sni,
+          insecure:    $ins,
+          utls: {
+            enabled:    true,
+            fingerprint: $fp
+          }
+        }
+      }' --arg outbound_server "$outbound_server" \
+         --argjson outbound_port "$outbound_port")
+    ;;
+
+  socks|socks5)
+    if [ -n "$outbound_username" ]; then
+      outbound_json=$(echo "$outbound_json" | jq \
+        --arg user "$outbound_username" \
+        --arg pass "$outbound_password2" \
+        '{
+          type:     "socks",
+          tag:      "proxy",
+          server:   $outbound_server,
+          server_port: ($outbound_port | tonumber),
+          username: $user,
+          password: $pass
+        }' --arg outbound_server "$outbound_server" \
+           --argjson outbound_port "$outbound_port")
+    else
+      outbound_json=$(echo "$outbound_json" | jq \
+        '{
+          type:     "socks",
+          tag:      "proxy",
+          server:   $outbound_server,
+          server_port: ($outbound_port | tonumber)
+        }' --arg outbound_server "$outbound_server" \
+           --argjson outbound_port "$outbound_port")
+    fi
+    ;;
+esac
+
+# ─── 构建完整 sing-box 配置文件 ────────────────────────────────────────────
+# inbound: 监听 7890（HTTP）、7891（SOCKS5）、TUN（fake-ip）
+CONFIG_JSON=$(jq -n \
+  --argjson outbound "$outbound_json" \
+  '{
+    log: {
+      level:   "info",
+      output:  "sing-box.log",
+      timestamp: true
+    },
+    inbounds: [
+      {
+        type:        "mixed",
+        tag:         "http",
+        listen:      "0.0.0.0",
+        listen_port: 7890,
+        sniff:       true
+      },
+      {
+        type:        "socks",
+        tag:         "socks-in",
+        listen:      "0.0.0.0",
+        listen_port: 7891,
+        sniff:       true
+      },
+      {
+        type:     "tun",
+        tag:      "tun-in",
+        interface_name: "tun0",
+        inet4_address:  "172.19.0.1/30",
+        inet6_address:  "fd00::1/126",
+        mtu: 9000,
+        auto_route:   true,
+        strict_route: true,
+        sniff:        true,
+        stack:        "system"
+      }
+    ],
+    outbounds: [
+      $outbound,
+      {
+        type:     "direct",
+        tag:      "direct"
+      },
+      {
+        type:     "dns",
+        tag:      "dns-out"
+      }
+    ],
+    route: {
+      rules: [
+        {
+          type:        "default",
+          outbound:    "direct"
+        },
+        {
+          protocol:    "dns",
+          outbound:    "dns-out"
+        }
+      ],
+      auto_detect_interface: true
+    },
+    dns: {
+      servers: [
+        {
+          tag:     "google",
+          address: "tls://8.8.8.8",
+          detour:  "proxy"
+        },
+        {
+          tag:     "local",
+          address: "https://223.6.6.6/dns-query",
+          detour:  "direct"
+        },
+        {
+          tag:     "block",
+          address: "rcode://success"
+        }
+      ],
+      rules: [
+        {
+          type: "default",
+          server: "local"
+        }
+      ]
+    }
+  }')
+
+echo "$CONFIG_JSON" > sing-box-config.json
+echo "[INFO] sing-box 配置已写入 sing-box-config.json"
+
+# ─── 启动 sing-box ──────────────────────────────────────────────────────────
+echo "[INFO] 启动 sing-box..."
+nohup ./sing-box run -c sing-box-config.json > sing-box.log 2>&1 &
+SINGBOX_PID=$!
+echo "IS_PROXY=true" >> $GITHUB_ENV
+echo "SINGBOX_PID=$SINGBOX_PID" >> $GITHUB_ENV
+echo "[INFO] sing-box 已启动 (PID: $SINGBOX_PID)，代理端口: HTTP=7890 SOCKS5=7891"
