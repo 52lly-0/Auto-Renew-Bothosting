@@ -13,10 +13,10 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: ⚙ 设置 Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -26,21 +26,14 @@ jobs:
           sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk jq wget
           pip install seleniumbase requests
           seleniumbase install chromedriver
-          
+
       - name: ⚙ 设置代理 (sing-box)
         continue-on-error: true
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
-          # 1. 安装 dos2unix 工具
-          sudo apt-get install -y dos2unix
-          
-          # 2. 在运行前，强制将本地脚本的换行符转换为 Unix 格式 (LF)
-          dos2unix setup_proxy.sh
-          
-          # 3. 赋予脚本执行权限并运行
-          chmod +x setup_proxy.sh
-          bash setup_proxy.sh
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
       - name: 🚀 运行续期脚本
         env:
           EMAIL: ${{ secrets.EMAIL }}
@@ -49,9 +42,6 @@ jobs:
           SESSION_TOKEN: ${{ secrets.SESSION_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          IS_PROXY: true
-          PROXY_PORT: 7890
-          PROXY_SERVER: http://127.0.0.1:7890
         run: |
           xvfb-run --auto-servernum python3 app.py
 
@@ -67,9 +57,14 @@ jobs:
       - name: 🧹 清理旧的工作流运行记录
         if: always()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId' | while read run_id; do
-            echo "删除运行记录: $run_id"
-            gh run delete $run_id || true
+          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+          count=0
+          for run_id in $runs; do
+            count=$((count + 1))
+            if [ $count -gt 1 ]; then
+              echo "删除运行记录: $run_id"
+              gh run delete $run_id || true
+            fi
           done
