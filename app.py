@@ -392,9 +392,9 @@ def main():
     print("#" * 25)
 
     IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
-    # 优先读 workflow 传入的 PROXY_PORT；未传入时自动探测（setup_proxy.sh 监听 7890）
     PROXY_PORT = os.environ.get("PROXY_PORT", "").strip() or _resolve_proxy_port()
-    PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip() or f"http://127.0.0.1:{PROXY_PORT}" 
+    PROXY_SERVER = os.environ.get("PROXY_SERVER", "").strip() or f"http://127.0.0.1:{PROXY_PORT}"
+    HEADLESS = os.environ.get("HEADLESS", "false").lower() == "true"
 
     sb_kwargs = {"uc": True, "headless": HEADLESS}
 
