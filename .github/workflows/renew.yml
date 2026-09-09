@@ -26,16 +26,22 @@ jobs:
           sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk jq wget
           pip install seleniumbase requests
           seleniumbase install chromedriver
-
+          
       - name: ⚙ 设置代理 (sing-box)
         continue-on-error: true
         env:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
-          # 赋予脚本执行权限并运行本地脚本
+          # 1. 赋予脚本执行权限并运行本地脚本
           chmod +x setup_proxy.sh
           bash setup_proxy.sh
-
+          
+          # 2. 安装 dos2unix 工具，并自动转换刚下载的脚本的换行符
+          sudo apt-get install -y dos2unix
+          dos2unix setup_proxy.sh
+          
+          # 3. 重新运行转换后的脚本（此时换行符已正确）
+          bash setup_proxy.sh
       - name: 🚀 运行续期脚本
         env:
           EMAIL: ${{ secrets.EMAIL }}
